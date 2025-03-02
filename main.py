@@ -1,57 +1,59 @@
 import cv2
 import numpy as np
-from pose_tracker import PoseTracker
-from model_loader import ModelLoader
-from visualizer import Visualizer
+import argparse
+import os
+from m import get_body_measurements
+from model_scaling import scale_body_model, scale_clothing_model
+from model_fitting import fit_clothing_to_body
+from visualization import visualize_fitted_models
 
-class VirtualTryOn:
-    def __init__(self):
-        self.pose_tracker = PoseTracker()
-        self.model_loader = ModelLoader()
-        self.visualizer = Visualizer(self.model_loader.body_model, self.model_loader.shirt_model)
-        self.running = True
-
-    def run(self):
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-        while self.running and cap.isOpened():
-            success, frame = cap.read()
-            if not success:
-                break
-
-            frame = cv2.flip(frame, 1)
-            landmarks = self.pose_tracker.track_pose(frame)
-
-            if landmarks:
-                mid_shoulder = np.array([
-                    (landmarks.landmark[11].x + landmarks.landmark[12].x) / 2,
-                    (landmarks.landmark[11].y + landmarks.landmark[12].y) / 2,
-                    (landmarks.landmark[11].z + landmarks.landmark[12].z) / 2
-                ])
-
-                scale_factor = np.linalg.norm(
-                    np.array([landmarks.landmark[11].x, landmarks.landmark[11].y]) -
-                    np.array([landmarks.landmark[12].x, landmarks.landmark[12].y])
-                ) * 5  # Increase scaling to make models more visible
-
-                # Debugging print statements
-                print(f"Updating models - Position: {mid_shoulder}, Scale: {scale_factor:.2f}")
-
-                # Update Open3D models
-                self.visualizer.update_models(mid_shoulder, scale_factor)
-                self.visualizer.force_refresh()  # Fix disappearing models
-
-            cv2.imshow("Virtual Try-On", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                self.running = False
-                break
-
-        cap.release()
-        cv2.destroyAllWindows()
-        self.visualizer.close()
+def main():
+    parser = argparse.ArgumentParser(description="Virtual clothing fitting using body measurements")
+    parser.add_argument("--body", default="models/body.obj", help="Path to body model file")
+    parser.add_argument("--shirt", default="models/shirt.obj", help="Path to shirt model file")
+    parser.add_argument("--output", default="output", help="Output directory")
+    args = parser.parse_args()
+    
+    # Ensure the models directory exists
+    if not os.path.exists("models"):
+        print("Error: 'models' directory not found.")
+        return
+    
+    # Check if the model files exist
+    if not os.path.exists(args.body) or not os.path.exists(args.shirt):
+        print(f"Error: Model files not found in {args.body} or {args.shirt}")
+        return
+    
+    # Create output directory if it doesn't exist
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    
+    print("Starting body measurement capture...")
+    # Capture measurements using webcam
+    measurements = get_body_measurements()
+    if measurements is None:
+        print("Failed to get measurements. Exiting.")
+        return
+    
+    print(f"Measurements captured: {measurements}")
+    
+    # Scale the body model based on measurements
+    print("Scaling body model...")
+    scaled_body = scale_body_model(args.body, measurements)
+    
+    # Scale the clothing model to match the body
+    print("Scaling clothing model...")
+    scaled_shirt = scale_clothing_model(args.shirt, measurements)
+    
+    # Fit the clothing onto the body
+    print("Fitting clothing to body...")
+    fitted_result = fit_clothing_to_body(scaled_body, scaled_shirt)
+    
+    # Visualize the result
+    print("Visualizing result...")
+    visualize_fitted_models(fitted_result)
+    
+    print("Process completed successfully")
 
 if __name__ == "__main__":
-    tryon = VirtualTryOn()
-    tryon.run()
+    main()
